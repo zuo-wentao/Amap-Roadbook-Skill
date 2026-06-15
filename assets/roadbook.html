@@ -389,18 +389,24 @@
     @media (min-width: 800px) {
       .app {
         flex-direction: row;
+        height: 100vh;
+        max-height: 100vh;
+        overflow: hidden;
       }
       main {
         position: static;
         flex: 1;
-        height: auto;
-        min-height: 100vh;
+        height: 100vh;
+        min-height: 0;
       }
       aside {
         width: 400px;
+        height: 100vh;
+        min-height: 0;
         padding: 24px;
         border-right: 1px solid var(--line);
         overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
       }
       h1 { font-size: 24px; }
       .sub { font-size: 14px; }
@@ -455,7 +461,6 @@
       border-right-color: var(--route);
       border-radius: 45%;
       transform: rotate(-8deg);
-      opacity: .28;
     }
 
     .pin {
@@ -616,7 +621,7 @@
             altitude: 0,
             lineWidth: function() { return def.lineWidth; },
             headColor: '#ffffff',
-            trailColor: 'rgba(180,180,180,0.15)',
+            trailColor: 'rgba(180,180,180,1)',
             interval: 1.0,
             duration: 8000
           });
@@ -633,7 +638,7 @@
               altitude: 0,
               lineWidth: function() { return 5; },
               headColor: '#4a9eff',
-              trailColor: 'rgba(74,158,255,0.3)',
+              trailColor: 'rgba(74,158,255,1)',
               interval: 1.0,
               duration: 2000
             });
@@ -644,6 +649,7 @@
 
     function renderTimeline(day) {
       $('timeline').innerHTML = '';
+      var consumedLegs = {};
 
       day.stops.forEach(function(stop, idx) {
         var hasLoc = Number.isFinite(stop.lng) && Number.isFinite(stop.lat);
@@ -736,9 +742,36 @@
           legEl.className = 'tl-leg';
 
           var leg = null;
+          var legIndex = -1;
           for (var li = 0; li < (day.legs || []).length; li++) {
             var l = day.legs[li];
-            if (l.from === stop.name && l.to === next.name) { leg = l; break; }
+            if (!consumedLegs[li] && l.from === stop.name) {
+              leg = l;
+              legIndex = li;
+              break;
+            }
+          }
+          if (!leg) {
+            for (var sli = 0; sli < (day.legs || []).length; sli++) {
+              var sl = day.legs[sli];
+              if (!consumedLegs[sli] && sl.from === stop.name && sl.to === next.name) {
+                leg = sl;
+                legIndex = sli;
+                break;
+              }
+            }
+          }
+          if (!leg) {
+            for (var nli = 0; nli < (day.legs || []).length; nli++) {
+              if (!consumedLegs[nli]) {
+                leg = day.legs[nli];
+                legIndex = nli;
+                break;
+              }
+            }
+          }
+          if (legIndex >= 0) {
+            consumedLegs[legIndex] = true;
           }
 
           function modeEmoji(m) {
@@ -1001,7 +1034,7 @@
           amapLocaContainer = loca;
 
           // 呼吸点（px 单位，缩放不变形）
-          var scatter = new Loca.ScatterLayer({ zIndex: 10, opacity: 0.8 });
+          var scatter = new Loca.ScatterLayer({ zIndex: 10, opacity: 1 });
           var scatterSource = new Loca.GeoJSONSource({ data: buildScatterData(day) });
           scatter.setSource(scatterSource);
           scatter.setStyle({
@@ -1014,43 +1047,63 @@
           });
           loca.add(scatter);
 
-          // 路线 - 每段先画 AMap.Polyline 兜底，再叠加 PulseLineLayer 动画
-          var segCount = stops.length - 1;
-          for (var si = 0; si < segCount; si++) {
-            if (!Number.isFinite(stops[si].lng) || !Number.isFinite(stops[si+1].lng)) continue;
-
-            // Find matching leg with routePoints
-            var matchingLeg = null;
-            for (var mli = 0; mli < (day.legs || []).length; mli++) {
-              var ml = day.legs[mli];
-              if (ml.from === stops[si].name && ml.to === stops[si+1].name) {
-                matchingLeg = ml;
-                break;
+          // 路线：优先按 legs 的真实 routePoints 绘制；无 routePoints 时才按相邻停靠点直线兜底。
+          var drawableLegs = [];
+          for (var li = 0; li < (day.legs || []).length; li++) {
+            var leg = day.legs[li];
+            if (leg.routePoints && leg.routePoints.length > 1) {
+              drawableLegs.push({ leg: leg, routePoints: leg.routePoints });
+            } else {
+              var fromPoint = null;
+              var toPoint = null;
+              for (var dsi = 0; dsi < stops.length; dsi++) {
+                if (stops[dsi].name === leg.from) fromPoint = stops[dsi];
+                if (stops[dsi].name === leg.to) toPoint = stops[dsi];
+              }
+              if (fromPoint && toPoint) {
+                drawableLegs.push({
+                  leg: leg,
+                  routePoints: [[fromPoint.lng, fromPoint.lat], [toPoint.lng, toPoint.lat]]
+                });
               }
             }
+          }
+          if (!drawableLegs.length) {
+            for (var si = 0; si < stops.length - 1; si++) {
+              if (!Number.isFinite(stops[si].lng) || !Number.isFinite(stops[si+1].lng)) continue;
+              drawableLegs.push({
+                leg: { routeStatus: 'failed' },
+                routePoints: [[stops[si].lng, stops[si].lat], [stops[si+1].lng, stops[si+1].lat]]
+              });
+            }
+          }
 
-            var routePts = matchingLeg && matchingLeg.routePoints;
+          for (var dii = 0; dii < drawableLegs.length; dii++) {
+            var matchingLeg = drawableLegs[dii].leg;
+            var routePts = drawableLegs[dii].routePoints;
             var pathArr;
+            var lineColor = '#666';
             if (routePts && routePts.length > 1) {
-              // 实际道路坐标
               pathArr = routePts.map(function(pt) { return [pt[0], pt[1]]; });
+              lineColor = '#8fb89b';
             } else {
-              // 直线兜底
               pathArr = [[stops[si].lng, stops[si].lat], [stops[si+1].lng, stops[si+1].lat]];
+              lineColor = '#777';
             }
 
             // ★ 基础线段：AMap.Polyline（不依赖 Loca）
             var polyline = new AMap.Polyline({
               path: pathArr,
               strokeWeight: 3,
-              strokeColor: '#666',
+              strokeColor: lineColor,
+              strokeStyle: 'solid',
               lineJoin: 'round',
               geodesic: true,
               zIndex: 11
             });
             polyline.setMap(map);
             routePolylines.push(polyline);
-            var defStyle = { lineWidth: 3, color: '#666' };
+            var defStyle = { lineWidth: 3, color: lineColor };
             arcDefaultStyles.push(defStyle);
 
             // ★ 飞线动画：PulseLineLayer（仅 Loca 加载成功时叠加，坐标与 Polyline 一致）
@@ -1067,14 +1120,14 @@
                     }
                   }]
                 };
-                var ll = new Loca.PulseLineLayer({ zIndex: 12, opacity: 0.6 });
+                var ll = new Loca.PulseLineLayer({ zIndex: 12, opacity: 1 });
                 var ls = new Loca.GeoJSONSource({ data: segFeat });
                 ll.setSource(ls);
                 ll.setStyle({
                   altitude: 0,
                   lineWidth: function() { return 3; },
                   headColor: '#ffffff',
-                  trailColor: 'rgba(180,180,180,0.15)',
+                  trailColor: 'rgba(180,180,180,1)',
                   interval: 1.0,
                   duration: 8000
                 });

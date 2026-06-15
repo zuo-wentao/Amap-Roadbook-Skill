@@ -258,6 +258,234 @@ function addPolyline(polylineStr, points) {
   }
 }
 
+function formatDuration(seconds) {
+  var n = Number(seconds);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  var minutes = Math.max(1, Math.round(n / 60));
+  if (minutes < 60) return `约${minutes}分钟`;
+  var hours = Math.floor(minutes / 60);
+  var rest = minutes % 60;
+  return rest ? `约${hours}小时${rest}分钟` : `约${hours}小时`;
+}
+
+function formatDistance(meters) {
+  var n = Number(meters);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  if (n < 1000) return `约${Math.round(n)}米`;
+  return `约${(n / 1000).toFixed(n < 10000 ? 1 : 0)}公里`;
+}
+
+function normalizeName(value) {
+  return String(value || '')
+    .replace(/[（(].*?[）)]/g, '')
+    .replace(/[\/／].*$/g, '')
+    .replace(/住宿|酒店|青旅|附近|区域|大街|公园|博物院/g, '')
+    .replace(/\s+/g, '')
+    .trim();
+}
+
+function namesMatch(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  var na = normalizeName(a);
+  var nb = normalizeName(b);
+  if (!na || !nb) return false;
+  return na === nb || na.includes(nb) || nb.includes(na);
+}
+
+function findStopForLeg(stops, name) {
+  if (!name) return null;
+  for (var i = 0; i < stops.length; i++) {
+    if (stops[i].name === name) return { ...stops[i], routeResolvedBy: 'stop-exact' };
+  }
+  for (var j = 0; j < stops.length; j++) {
+    if (namesMatch(stops[j].name, name)) return { ...stops[j], routeResolvedBy: 'stop-fuzzy' };
+  }
+  return null;
+}
+
+function readAdcode(value) {
+  if (!value) return '';
+  if (typeof value === 'string') return '';
+  return value.adcode || value.citycode || '';
+}
+
+function readCityLabel(value) {
+  if (!value) return '';
+  if (typeof value === 'string') return value;
+  return value.label || value.name || value.city || '';
+}
+
+function parseLocation(value) {
+  if (!value || typeof value !== 'string') return null;
+  var parts = value.split(',');
+  if (parts.length < 2) return null;
+  var lng = Number(parts[0]);
+  var lat = Number(parts[1]);
+  if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
+  return { lng, lat };
+}
+
+async function resolveRouteEndpoint({ webKey, name, source, cache }) {
+  if (!name) return null;
+  if (cache.has(name)) return cache.get(name);
+
+  var city = readCityLabel(source.destination) || readCityLabel(source.origin);
+  var adcode = readAdcode(source.destination) || readAdcode(source.origin);
+  var candidates = [];
+  if (name.includes('住宿') || name.includes('酒店') || name.includes('青旅')) {
+    var areaName = name.replace(/住宿|酒店|青旅|附近|区域/g, '').trim();
+    if (areaName) candidates.push(areaName);
+    var lodgingArea = source.lodging && (source.lodging.area || source.lodging.name || source.lodging.address);
+    if (lodgingArea) candidates.push(String(lodgingArea));
+  }
+  candidates.push(name);
+
+  for (var ci = 0; ci < candidates.length; ci++) {
+    var keyword = candidates[ci];
+    try {
+      var placeParams = new URLSearchParams({
+        key: webKey,
+        keywords: keyword,
+        city: adcode || city,
+        city_limit: 'false',
+        page_size: '1',
+        output: 'json'
+      });
+      var placeResp = await fetch(`https://restapi.amap.com/v5/place/text?${placeParams}`);
+      var placeData = await placeResp.json();
+      if (placeData.status === '1' && placeData.pois && placeData.pois.length > 0) {
+        var poi = placeData.pois[0];
+        var loc = parseLocation(poi.location);
+        if (loc) {
+          var resolvedPoi = {
+            name,
+            lng: loc.lng,
+            lat: loc.lat,
+            routeResolvedBy: 'poi',
+            routeResolvedName: poi.name || keyword
+          };
+          cache.set(name, resolvedPoi);
+          return resolvedPoi;
+        }
+      }
+    } catch {}
+
+    try {
+      var geoParams = new URLSearchParams({
+        key: webKey,
+        address: city ? `${city}${keyword}` : keyword,
+        city: adcode || city,
+        output: 'json'
+      });
+      var geoResp = await fetch(`https://restapi.amap.com/v3/geocode/geo?${geoParams}`);
+      var geoData = await geoResp.json();
+      if (geoData.status === '1' && geoData.geocodes && geoData.geocodes.length > 0) {
+        var geo = geoData.geocodes[0];
+        var geoLoc = parseLocation(geo.location);
+        if (geoLoc) {
+          var resolvedGeo = {
+            name,
+            lng: geoLoc.lng,
+            lat: geoLoc.lat,
+            routeResolvedBy: 'geocode',
+            routeResolvedName: geo.formatted_address || keyword
+          };
+          cache.set(name, resolvedGeo);
+          return resolvedGeo;
+        }
+      }
+    } catch {}
+  }
+
+  cache.set(name, null);
+  return null;
+}
+
+async function queryStandardRoute({ webKey, apiType, originStop, destStop }) {
+  const params = new URLSearchParams({
+    key: webKey,
+    origin: `${originStop.lng},${originStop.lat}`,
+    destination: `${destStop.lng},${destStop.lat}`,
+    output: 'json'
+  });
+  const url = `https://restapi.amap.com/v3/direction/${apiType}?${params}`;
+  const resp = await fetch(url);
+  const data = await resp.json();
+
+  if (data.status !== '1' || !data.route || !data.route.paths || data.route.paths.length === 0) {
+    return { ok: false, error: data.info || data.infocode || 'no route path' };
+  }
+
+  const routePath = data.route.paths[0];
+  const steps = routePath.steps || [];
+  var points = [];
+  for (var i = 0; i < steps.length; i++) {
+    addPolyline(steps[i].polyline, points);
+  }
+
+  if (points.length < 2) {
+    return { ok: false, error: 'empty route polyline' };
+  }
+
+  return {
+    ok: true,
+    routePoints: downsamplePoints(points, apiType === 'walking' ? 120 : 100),
+    durationText: formatDuration(routePath.duration),
+    distanceText: formatDistance(routePath.distance)
+  };
+}
+
+async function queryTransitRoute({ webKey, originStop, destStop, city, cityd }) {
+  const params = new URLSearchParams({
+    key: webKey,
+    origin: `${originStop.lng},${originStop.lat}`,
+    destination: `${destStop.lng},${destStop.lat}`,
+    city,
+    cityd,
+    output: 'json',
+    extensions: 'all'
+  });
+  const url = `https://restapi.amap.com/v3/direction/transit/integrated?${params}`;
+  const resp = await fetch(url);
+  const data = await resp.json();
+
+  if (data.status !== '1' || !data.route || !data.route.transits || data.route.transits.length === 0) {
+    return { ok: false, error: data.info || data.infocode || 'no transit route' };
+  }
+
+  const transit = data.route.transits[0];
+  const segs = transit.segments || [];
+  var points = [];
+  for (var tsi = 0; tsi < segs.length; tsi++) {
+    var seg = segs[tsi];
+    if (seg.walking && seg.walking.steps) {
+      for (var ws = 0; ws < seg.walking.steps.length; ws++) {
+        addPolyline(seg.walking.steps[ws].polyline, points);
+      }
+    }
+    if (seg.bus && seg.bus.buslines) {
+      for (var bl = 0; bl < seg.bus.buslines.length; bl++) {
+        addPolyline(seg.bus.buslines[bl].polyline, points);
+      }
+    }
+    if (seg.railway && seg.railway.polyline) {
+      addPolyline(seg.railway.polyline, points);
+    }
+  }
+
+  if (points.length < 2) {
+    return { ok: false, error: 'empty transit polyline' };
+  }
+
+  return {
+    ok: true,
+    routePoints: downsamplePoints(points, 160),
+    durationText: formatDuration(transit.duration),
+    distanceText: formatDistance(transit.distance)
+  };
+}
+
 async function enrichWithRoutes(source) {
   const webKey = resolveKey('AMAP_WEB_SERVICE_KEY');
   if (!webKey) {
@@ -266,7 +494,10 @@ async function enrichWithRoutes(source) {
   }
 
   const days = source.days || [];
-  let total = 0, done = 0;
+  let total = 0, done = 0, fallbackDone = 0, skipped = 0, failed = 0;
+  const city = readAdcode(source.destination) || readAdcode(source.origin);
+  const cityd = readAdcode(source.destination) || city;
+  const endpointCache = new Map();
 
   for (let di = 0; di < days.length; di++) {
     const legs = days[di].legs || [];
@@ -274,103 +505,90 @@ async function enrichWithRoutes(source) {
       const leg = legs[li];
       const mode = (leg.mode || '').toLowerCase();
 
-      // Map leg mode to direction API type
       let apiType = null;
       if (mode === 'walk') apiType = 'walking';
       else if (mode === 'taxi' || mode === 'drive' || mode === 'driving') apiType = 'driving';
       else if (mode === 'bike' || mode === 'bicycling') apiType = 'bicycling';
       else if (mode === 'public_transit') apiType = 'transit';
-      // rail / mixed → skip
 
-      if (!apiType) continue;
-
-      // Find the two stops that this leg connects
-      var originStop = null, destStop = null;
-      for (var si = 0; si < (days[di].stops || []).length; si++) {
-        var s = days[di].stops[si];
-        if (s.name === leg.from) originStop = s;
-        if (s.name === leg.to) destStop = s;
+      if (!apiType) {
+        leg.routeStatus = 'skipped';
+        leg.routeSource = mode === 'rail' || mode === 'flight' ? 'intercity' : 'unsupported-mode';
+        skipped++;
+        continue;
       }
 
-      if (!originStop || !destStop) continue;
-      if (!Number.isFinite(originStop.lng) || !Number.isFinite(destStop.lng)) continue;
+      var stops = days[di].stops || [];
+      var originStop = findStopForLeg(stops, leg.from) || await resolveRouteEndpoint({ webKey, name: leg.from, source, cache: endpointCache });
+      var destStop = findStopForLeg(stops, leg.to) || await resolveRouteEndpoint({ webKey, name: leg.to, source, cache: endpointCache });
+
+      if (!originStop || !destStop) {
+        leg.routeStatus = 'failed';
+        leg.routeSource = 'missing-stop';
+        failed++;
+        continue;
+      }
+      if (!Number.isFinite(originStop.lng) || !Number.isFinite(originStop.lat) || !Number.isFinite(destStop.lng) || !Number.isFinite(destStop.lat)) {
+        leg.routeStatus = 'failed';
+        leg.routeSource = 'missing-coordinate';
+        failed++;
+        continue;
+      }
 
       total++;
       try {
+        var result = null;
         if (apiType === 'transit') {
-          // 公交/地铁路径规划（返回格式不同）
-          const params = new URLSearchParams({
-            key: webKey,
-            origin: `${originStop.lng},${originStop.lat}`,
-            destination: `${destStop.lng},${destStop.lat}`,
-            city: source?.destination?.adcode || '',
-            cityd: source?.destination?.adcode || '',
-            output: 'json',
-            extensions: 'all'
-          });
-          const url = `https://restapi.amap.com/v3/direction/transit/integrated?${params}`;
-          const resp = await fetch(url);
-          const data = await resp.json();
-          if (data.status === '1' && data.route && data.route.transits && data.route.transits.length > 0) {
-            const transit = data.route.transits[0];
-            const segs = transit.segments || [];
-            var points = [];
-            for (var tsi = 0; tsi < segs.length; tsi++) {
-              var seg = segs[tsi];
-              // 步行段
-              if (seg.walking && seg.walking.steps) {
-                for (var ws = 0; ws < seg.walking.steps.length; ws++) {
-                  addPolyline(seg.walking.steps[ws].polyline, points);
-                }
-              }
-              // 公交段
-              if (seg.bus && seg.bus.buslines) {
-                for (var bl = 0; bl < seg.bus.buslines.length; bl++) {
-                  addPolyline(seg.bus.buslines[bl].polyline, points);
-                }
-              }
-              // 铁路段（地铁/火车）
-              if (seg.railway && seg.railway.polyline) {
-                addPolyline(seg.railway.polyline, points);
-              }
-            }
-            if (points.length > 1) {
-              leg.routePoints = downsamplePoints(points, 120);
-              done++;
+          result = await queryTransitRoute({ webKey, originStop, destStop, city, cityd });
+          if (!result.ok) {
+            result = await queryStandardRoute({ webKey, apiType: 'driving', originStop, destStop });
+            if (result.ok) {
+              result.routeSource = 'driving-fallback';
+              result.routeStatus = 'fallback';
             }
           }
         } else {
-          // 驾车/步行/骑行（标准 polyline 格式）
-          const params = new URLSearchParams({
-            key: webKey,
-            origin: `${originStop.lng},${originStop.lat}`,
-            destination: `${destStop.lng},${destStop.lat}`,
-            output: 'json'
-          });
-          const url = `https://restapi.amap.com/v3/direction/${apiType}?${params}`;
-          const resp = await fetch(url);
-          const data = await resp.json();
-
-          if (data.status === '1' && data.route && data.route.paths && data.route.paths.length > 0) {
-            const path = data.route.paths[0];
-            const steps = path.steps || [];
-            var points = [];
-            for (var psi = 0; psi < steps.length; psi++) {
-              addPolyline(steps[psi].polyline, points);
+          result = await queryStandardRoute({ webKey, apiType, originStop, destStop });
+          if (!result.ok && apiType === 'walking') {
+            result = await queryStandardRoute({ webKey, apiType: 'driving', originStop, destStop });
+            if (result.ok) {
+              result.routeSource = 'driving-fallback';
+              result.routeStatus = 'fallback';
             }
-            // Downsample to ~80 points max
-            leg.routePoints = downsamplePoints(points, 80);
-            done++;
           }
         }
+
+        if (result && result.ok) {
+          leg.routePoints = result.routePoints;
+          leg.routeStatus = result.routeStatus || 'ok';
+          leg.routeSource = result.routeSource || apiType;
+          leg.routeOriginName = originStop.name;
+          leg.routeDestinationName = destStop.name;
+          leg.routeOriginResolvedBy = originStop.routeResolvedBy || 'stop';
+          leg.routeDestinationResolvedBy = destStop.routeResolvedBy || 'stop';
+          if (originStop.routeResolvedName) leg.routeOriginResolvedName = originStop.routeResolvedName;
+          if (destStop.routeResolvedName) leg.routeDestinationResolvedName = destStop.routeResolvedName;
+          if (result.durationText) leg.durationText = result.durationText;
+          if (result.distanceText) leg.distanceText = result.distanceText;
+          if (leg.routeStatus === 'fallback') fallbackDone++;
+          else done++;
+        } else {
+          leg.routeStatus = 'failed';
+          leg.routeSource = apiType;
+          leg.routeError = result?.error || 'route query failed';
+          failed++;
+        }
       } catch (err) {
-        // Silently skip
+        leg.routeStatus = 'failed';
+        leg.routeSource = apiType;
+        leg.routeError = err.message || 'route query error';
+        failed++;
       }
     }
   }
 
   if (total > 0) {
-    console.log(`ℹ️  路线规划：${done}/${total} 段成功获取实际道路`);
+    console.log(`ℹ️  路线规划：${done}/${total} 段真实线路，${fallbackDone} 段道路形态兜底，${failed} 段失败，${skipped} 段跳过`);
   }
 }
 
@@ -392,14 +610,24 @@ async function main() {
 
   console.log(`🔑  Key 状态：WEB=${webKey ? '✅' : '❌'}  JS=${jsKey ? '✅' : '❌'}  SECCODE=${secCode ? '✅' : '❌'}`);
 
-  // JS API Key 详细校验
-  if (!jsKey) {
-    console.warn('⚠️  AMAP_JS_API_KEY 未设置，地图将显示示意地图而非真实高德地图。');
-    console.warn('   设置方式：export AMAP_JS_API_KEY="your-key" 或配置到 openclaw.json');
-  } else if (jsKey.length < 30) {
+  const missingKeys = [];
+  if (!webKey) missingKeys.push('AMAP_WEB_SERVICE_KEY');
+  if (!jsKey) missingKeys.push('AMAP_JS_API_KEY');
+  if (!secCode) missingKeys.push('AMAP_JS_SECURITY_CODE');
+  if (missingKeys.length) {
+    console.error(`❌ 缺少必填高德 Key：${missingKeys.join(', ')}`);
+    console.error('   请配置到 Shell 环境变量或 ~/.openclaw/openclaw.json 的 skills.entries.amap-roadbook.env 中。');
+    process.exit(1);
+  }
+
+  if (jsKey.length < 30) {
     console.warn(`⚠️  AMAP_JS_API_KEY 长度异常（${jsKey.length} 位），预期为 32 位。可能是脱敏值，请检查。`);
   } else if (/^\*+$/.test(jsKey)) {
     console.error('❌ AMAP_JS_API_KEY 被脱敏符号代替（仅包含星号），请传入真实 Key。');
+    process.exit(1);
+  }
+  if (/^\*+$/.test(secCode)) {
+    console.error('❌ AMAP_JS_SECURITY_CODE 被脱敏符号代替（仅包含星号），请传入真实安全密钥。');
     process.exit(1);
   }
 

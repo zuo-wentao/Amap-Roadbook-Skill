@@ -1,8 +1,8 @@
 ---
 name: amap-roadbook
-description: 当用户想把自然语言旅行想法生成高德/Amap 路书，或生成可公网访问的 HTML/Excel/JSON 路书产物时使用。本 skill 会先反问缺失信息，再进行地点解析、POI 搜索、路线规划、每日时间线、天气提醒、假设说明，并默认发布到公网静态目录以便访问和下载。需要用户配置高德 Web Service API Key。
+description: 当用户想把自然语言旅行想法生成高德/Amap 路书，或生成可公网访问的 HTML/Excel/JSON 路书产物时使用。本 skill 会先反问缺失信息，再进行地点解析、POI 搜索、路线规划、每日时间线、天气提醒、假设说明，并默认发布到公网静态目录以便访问和下载。需要用户配置高德 Web Service API Key、JavaScript API Key 和 JS 安全密钥。
 version: 0.2.1
-metadata: { "openclaw": { "requires": { "env": ["AMAP_WEB_SERVICE_KEY"] }, "primaryEnv": "AMAP_WEB_SERVICE_KEY", "envVars": [{ "name": "AMAP_WEB_SERVICE_KEY", "required": true, "description": "高德 Web Service API Key，用于地理编码、POI 搜索、路径规划、输入提示、行政区划和天气查询。" }, { "name": "AMAP_JS_API_KEY", "required": false, "description": "可选。用于交互式地图渲染的高德 JavaScript API Key。" }, { "name": "AMAP_JS_SECURITY_CODE", "required": false, "description": "可选。当前端地图渲染需要安全密钥时使用。" }] } }
+metadata: { "openclaw": { "requires": { "env": ["AMAP_WEB_SERVICE_KEY", "AMAP_JS_API_KEY", "AMAP_JS_SECURITY_CODE"] }, "primaryEnv": "AMAP_WEB_SERVICE_KEY", "envVars": [{ "name": "AMAP_WEB_SERVICE_KEY", "required": true, "description": "高德 Web Service API Key，用于地理编码、POI 搜索、路径规划、输入提示、行政区划和天气查询。" }, { "name": "AMAP_JS_API_KEY", "required": true, "description": "高德 JavaScript API Key，用于交互式地图渲染。" }, { "name": "AMAP_JS_SECURITY_CODE", "required": true, "description": "高德 JavaScript API 安全密钥，用于前端地图渲染。" }] } }
 ---
 
 # 高德 AI 路书
@@ -36,14 +36,9 @@ metadata: { "openclaw": { "requires": { "env": ["AMAP_WEB_SERVICE_KEY"] }, "prim
 
 用户需要配置自己的高德 Key。不要把作者的 Key 写死进 skill、脚本或示例输出。
 
-### 必填
-
 - `AMAP_WEB_SERVICE_KEY`：高德 Web Service API Key，用于地理编码、POI 搜索、路径规划、天气等服务。
-
-### 可选
-
 - `AMAP_JS_API_KEY`：高德 JavaScript API Key，用于交互式地图渲染。
-- `AMAP_JS_SECURITY_CODE`：高德 JavaScript API 安全密钥，仅当前端地图配置需要时使用。
+- `AMAP_JS_SECURITY_CODE`：高德 JavaScript API 安全密钥，用于前端地图渲染。
 
 ### 配置方式（按优先级）
 
@@ -68,9 +63,9 @@ metadata: { "openclaw": { "requires": { "env": ["AMAP_WEB_SERVICE_KEY"] }, "prim
       "amap-roadbook": {
         enabled: true,
         env: {
-          AMAP_WEB_SERVICE_KEY: "你的高德 Web Service Key",
-          AMAP_JS_API_KEY: "你的高德 JS API Key（可选）",
-          AMAP_JS_SECURITY_CODE: "你的高德 JS 安全密钥（可选）"
+          AMAP_WEB_SERVICE_KEY: "YOU_AMAP_WEB_SERVICE_KEY",
+          AMAP_JS_API_KEY: "YOUR_AMAP_JS_API_KEY",
+          AMAP_JS_SECURITY_CODE: "YOUR_AMAP_JS_SECURITY_CODE"
         }
       }
     }
@@ -78,7 +73,7 @@ metadata: { "openclaw": { "requires": { "env": ["AMAP_WEB_SERVICE_KEY"] }, "prim
 }
 ```
 
-如果 OpenClaw 客户端支持 `apiKey` 便捷字段，也可以这样配置主 Key：
+不建议只配置 `apiKey` 便捷字段；本 skill 需要同时读取三个环境变量。完整配置应放在 `skills.entries.amap-roadbook.env` 中：
 
 ```json5
 {
@@ -86,13 +81,10 @@ metadata: { "openclaw": { "requires": { "env": ["AMAP_WEB_SERVICE_KEY"] }, "prim
     entries: {
       "amap-roadbook": {
         enabled: true,
-        apiKey: {
-          source: "env",
-          provider: "default",
-          id: "AMAP_WEB_SERVICE_KEY"
-        },
         env: {
-          AMAP_WEB_SERVICE_KEY: "你的高德 Web Service Key"
+          AMAP_WEB_SERVICE_KEY: "YOU_AMAP_WEB_SERVICE_KEY",
+          AMAP_JS_API_KEY: "YOUR_AMAP_JS_API_KEY",
+          AMAP_JS_SECURITY_CODE: "YOUR_AMAP_JS_SECURITY_CODE"
         }
       }
     }
@@ -104,8 +96,8 @@ metadata: { "openclaw": { "requires": { "env": ["AMAP_WEB_SERVICE_KEY"] }, "prim
 
 ```bash
 export AMAP_WEB_SERVICE_KEY="你的高德 Web Service Key"
-export AMAP_JS_API_KEY="你的高德 JS API Key（可选）"
-export AMAP_JS_SECURITY_CODE="你的高德 JS 安全密钥（可选）"
+export AMAP_JS_API_KEY="你的高德 JS API Key"
+export AMAP_JS_SECURITY_CODE="你的高德 JS 安全密钥"
 ```
 
 ### 验证 Key 配置
@@ -128,7 +120,7 @@ node scripts/plan-roadbook.mjs --input input/sample.json --output-dir /tmp/check
 - 高德开放平台：https://lbs.amap.com/
 - 控制台 → 应用管理 → 我的应用 → 创建新应用
 - **Web Service Key**：平台选「Web 服务」
-- **JS API Key**：平台选「Web 端(JSAPI)」，可选启用安全密钥并设置域名白名单
+- **JS API Key**：平台选「Web 端(JSAPI)」，启用安全密钥并设置域名白名单
 
 ## 工作流程
 
