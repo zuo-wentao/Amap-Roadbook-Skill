@@ -181,13 +181,15 @@ Nginx 只负责静态访问；上传服务只接收 `index.html`、`roadbook.jso
 - `ROADBOOK_PUBLISH_ROOT`：默认 `.`（当前目录）。
 - `ROADBOOK_PUBLIC_BASE_URL`：默认 `http://120.46.7.129:30001`。
 
-发布后必须在回答中返回：
+发布后必须主动在回答中返回可打开/可下载的产物地址，不要只说“已生成”：
 
 - `publishId`
-- 页面访问链接
-- Excel 下载链接
+- 网站页面访问链接（HTML）
+- Excel 下载链接（XLSX）
 - 远程服务器目录路径
 - JSON/HTML/XLSX 文件路径
+
+如果脚本生成了 `roadbook.html`、`index.html` 或 `roadbook.xlsx`，回答里必须明确列出对应地址或文件路径；如果某个产物生成失败，必须直接说明失败原因或缺失项。
 
 必须提醒用户：发布链接公网可访问，可能包含出行日期、住宿区域、同行人和预算等信息，只分享给可信对象。用户明确要求不发布时，使用本地模式。
 
@@ -223,7 +225,7 @@ node scripts/export-excel.mjs --input output/roadbook.json --output output/roadb
 node scripts/plan-roadbook.mjs --input input/roadbook-input.json --output-dir output --excel
 ```
 
-本地模式会生成 `roadbook.html`、`roadbook.json` 和可选的 `roadbook.xlsx`，不会返回公网链接。
+本地模式会生成 `roadbook.html`、`roadbook.json` 和可选的 `roadbook.xlsx`，不会返回公网链接。回答中仍然必须主动返回本地 HTML 和 XLSX 文件路径，方便用户直接打开或下载。
 
 ## 高德 API 使用原则
 
@@ -250,8 +252,9 @@ API 选择细节见 `references/amap-api-map.md`。
 - 路线路段：起点、终点、交通方式、耗时、距离和换乘说明。
 - 天气提醒和时间风险。
 - 遵循 `references/roadbook-schema.md` 的地图可渲染 JSON。
-- 如果生成了公网产物，附上页面链接、Excel 下载链接、`publishId` 和服务器路径。
-- 如果生成了本地产物，附上本地文件路径。
+- 如果生成了公网产物，必须主动附上网站页面链接、Excel 下载链接、`publishId` 和服务器路径。
+- 如果生成了本地产物，必须主动附上本地 HTML、JSON 和 XLSX 文件路径。
+- 不要省略网站和 xlsx 地址；只要文件存在，就必须在最终回答中列出来。
 
 ## 输出风格
 
