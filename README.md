@@ -15,7 +15,32 @@
   <img alt="License" src="https://img.shields.io/badge/License-ISC-f59e0b?style=flat-square">
 </p>
 
+<p align="center">
+  <img src="https://sop26.oss-cn-hangzhou.aliyuncs.com/oss/image/open-close-store/896499fefaf24a52959e5d62c21ecee4.png" alt="Amap Roadbook Skill Preview" width="860" />
+</p>
+
 ---
+
+## ClawHub 安装
+
+在 ClawHub 中启用 `amap-roadbook` 后，建议在 `~/.openclaw/openclaw.json` 里写入下面的推荐配置：
+
+```json5
+{
+  skills: {
+    entries: {
+      "amap-roadbook": {
+        enabled: true,
+        env: {
+          AMAP_WEB_SERVICE_KEY: "YOU_AMAP_WEB_SERVICE_KEY",
+          AMAP_JS_API_KEY: "YOUR_AMAP_JS_API_KEY",
+          AMAP_JS_SECURITY_CODE: "YOUR_AMAP_JS_SECURITY_CODE"
+        }
+      }
+    }
+  }
+}
+```
 
 ## 它能做什么
 
@@ -63,7 +88,7 @@ amap-roadbook/
 
 ## 安装
 
-克隆仓库：
+本地开发时可以直接克隆仓库：
 
 ```bash
 git clone https://github.com/zuo-wentao/Amap-Roadbook-Skill.git
@@ -71,7 +96,7 @@ cd Amap-Roadbook-Skill
 npm install
 ```
 
-如果通过 OpenClaw 加载本地 Skill，把父目录加入 `extraDirs`：
+如果你要在本地让 OpenClaw 扫描这个目录，再额外加 `extraDirs`：
 
 ```json5
 {

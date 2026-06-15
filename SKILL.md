@@ -7,6 +7,8 @@ metadata: { "openclaw": { "requires": { "env": ["AMAP_WEB_SERVICE_KEY", "AMAP_JS
 
 # 高德 AI 路书
 
+GitHub 仓库预览效果： [zuo-wentao/Amap-Roadbook-Skill](https://github.com/zuo-wentao/Amap-Roadbook-Skill)
+
 根据用户的自然语言旅行计划，生成一份可执行的地图路书。路书应结合高德 API、路线规划、天气信息、每日时间线和可用于地图渲染的结构化数据。
 
 ## 核心规则
@@ -54,11 +56,6 @@ metadata: { "openclaw": { "requires": { "env": ["AMAP_WEB_SERVICE_KEY", "AMAP_JS
 ```json5
 {
   skills: {
-    load: {
-      extraDirs: [
-        "/path/to/amap-roadbook/parent-dir"
-      ]
-    },
     entries: {
       "amap-roadbook": {
         enabled: true,
@@ -73,20 +70,17 @@ metadata: { "openclaw": { "requires": { "env": ["AMAP_WEB_SERVICE_KEY", "AMAP_JS
 }
 ```
 
-不建议只配置 `apiKey` 便捷字段；本 skill 需要同时读取三个环境变量。完整配置应放在 `skills.entries.amap-roadbook.env` 中：
+不建议只配置 `apiKey` 便捷字段；本 skill 需要同时读取三个环境变量。
+
+如果你是本地开发、并且需要让 OpenClaw 扫描额外目录，再单独加：
 
 ```json5
 {
   skills: {
-    entries: {
-      "amap-roadbook": {
-        enabled: true,
-        env: {
-          AMAP_WEB_SERVICE_KEY: "YOU_AMAP_WEB_SERVICE_KEY",
-          AMAP_JS_API_KEY: "YOUR_AMAP_JS_API_KEY",
-          AMAP_JS_SECURITY_CODE: "YOUR_AMAP_JS_SECURITY_CODE"
-        }
-      }
+    load: {
+      extraDirs: [
+        "/path/to/amap-roadbook/parent-dir"
+      ]
     }
   }
 }
