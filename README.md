@@ -24,7 +24,7 @@
 ## ClawHub 安装
 
 ```json5
-openclaw skills install amap-roadbook
+openclaw skills install amap-road-book
 ```
 
 在 ClawHub 中启用 `amap-roadbook` 后，建议在 `~/.openclaw/openclaw.json` 里写入下面的推荐配置：
